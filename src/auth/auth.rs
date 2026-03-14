@@ -1,12 +1,13 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 const REFRESH_URL: &str = "https://platform.claude.com/v1/oauth/token";
 const SCOPES: &str = "user:profile user:inference user:sessions:claude_code user:mcp_servers";
-const REFRESH_BUFFER_MS: u64 = 5 * 60 * 1000; // 5 minutes
+const REFRESH_BUFFER_MS: u64 = 5 * 60 * 1000;
 
 #[derive(Deserialize, Serialize)]
 pub struct CredentialsFile {
@@ -14,7 +15,7 @@ pub struct CredentialsFile {
     pub claude_ai_oauth: OAuthData,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Clone)]
 pub struct OAuthData {
     #[serde(rename = "accessToken")]
     pub access_token: String,
@@ -31,14 +32,65 @@ pub struct OAuthData {
 
 pub fn load_credentials() -> Result<CredentialsFile, String> {
     let path = credentials_path()?;
+    if let Ok(text) = fs::read_to_string(&path) {
+        if let Ok(creds) = serde_json::from_str::<CredentialsFile>(&text) {
+            return Ok(creds);
+        }
+    }
 
-    let text =
-        fs::read_to_string(&path).map_err(|e| format!("Could not read credentials file: {}", e))?;
-
-    let creds: CredentialsFile = serde_json::from_str(&text)
+    let keychain_data = read_from_keychain()?;
+    let creds: CredentialsFile = serde_json::from_str(&keychain_data)
         .map_err(|e| format!("Could not parse credentials JSON: {}", e))?;
 
     Ok(creds)
+}
+
+fn read_from_keychain() -> Result<String, String> {
+    let output = Command::new("security")
+        .args([
+            "find-generic-password",
+            "-s",
+            "Claude Code-credentials",
+            "-w",
+        ])
+        .output()
+        .map_err(|e| format!("Failed to read keychain: {}", e))?;
+
+    if !output.status.success() {
+        return Err("Keychain entry not found".to_string());
+    }
+
+    let mut text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+    if text.starts_with("7b") || text.contains("\\x") {
+        text = decode_hex_string(&text)?;
+    }
+
+    Ok(text)
+}
+
+fn decode_hex_string(hex: &str) -> Result<String, String> {
+    let hex = hex.trim();
+    let mut bytes = Vec::new();
+    let mut i = 0;
+
+    while i < hex.len() {
+        if hex.starts_with("\\x") {
+            let byte = u8::from_str_radix(&hex[i + 2..i + 4], 16)
+                .map_err(|_| "Invalid hex".to_string())?;
+            bytes.push(byte);
+            i += 4;
+        } else if hex.len() >= 2 {
+            let byte =
+                u8::from_str_radix(&hex[i..i + 2], 16).map_err(|_| "Invalid hex".to_string())?;
+            bytes.push(byte);
+            i += 2;
+        } else {
+            break;
+        }
+    }
+
+    String::from_utf8(bytes).map_err(|e| format!("Invalid UTF-8: {}", e))
 }
 
 pub fn is_token_expired(oauth: &OAuthData) -> bool {
@@ -112,7 +164,6 @@ pub fn refresh_token(oauth: &mut OAuthData) -> Result<(), String> {
 }
 
 fn credentials_path() -> Result<PathBuf, String> {
-    // check for env override first
     if let Ok(custom) = std::env::var("CLAUDE_CREDS_PATH") {
         return Ok(PathBuf::from(custom));
     }
