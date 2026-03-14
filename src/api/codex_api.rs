@@ -5,18 +5,24 @@ const USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
 
 #[derive(Deserialize, Debug)]
 pub struct CodexUsageResponse {
-    #[serde(rename = "rate_limit")]
-    pub rate_limit: Option<CodexRateLimit>,
-    #[serde(rename = "additional_rate_limits")]
-    pub additional_rate_limits: Option<Vec<AdditionalRateLimit>>,
-    #[serde(rename = "credits")]
-    pub credits: Option<CodexCredits>,
+    #[serde(rename = "user_id")]
+    pub user_id: Option<String>,
+    #[serde(rename = "account_id")]
+    pub account_id: Option<String>,
+    #[serde(rename = "email")]
+    pub email: Option<String>,
     #[serde(rename = "plan_type")]
     pub plan_type: Option<String>,
+    #[serde(rename = "rate_limit")]
+    pub rate_limit: Option<CodexRateLimit>,
 }
 
 #[derive(Deserialize, Debug)]
 pub struct CodexRateLimit {
+    #[serde(rename = "allowed")]
+    pub allowed: Option<bool>,
+    #[serde(rename = "limit_reached")]
+    pub limit_reached: Option<bool>,
     #[serde(rename = "primary_window")]
     pub primary_window: Option<RateWindow>,
     #[serde(rename = "secondary_window")]
@@ -24,7 +30,14 @@ pub struct CodexRateLimit {
 }
 
 #[derive(Deserialize, Debug)]
-pub struct RateWindow {
+#[serde(untagged)]
+pub enum RateWindow {
+    Value(RateWindowData),
+    Null,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct RateWindowData {
     #[serde(rename = "used_percent")]
     pub used_percent: Option<f64>,
     #[serde(rename = "reset_at")]
@@ -35,25 +48,18 @@ pub struct RateWindow {
     pub limit_window_seconds: Option<i64>,
 }
 
-#[derive(Deserialize, Debug)]
-pub struct AdditionalRateLimit {
-    #[serde(rename = "limit_name")]
-    pub limit_name: Option<String>,
-    #[serde(rename = "rate_limit")]
-    pub rate_limit: Option<CodexRateLimit>,
+impl RateWindow {
+    pub fn as_data(&self) -> Option<&RateWindowData> {
+        match self {
+            RateWindow::Value(d) => Some(d),
+            RateWindow::Null => None,
+        }
+    }
 }
 
-#[derive(Deserialize, Debug)]
-pub struct CodexCredits {
-    #[serde(rename = "balance")]
-    pub balance: Option<f64>,
-}
-
-#[derive(Deserialize, Debug)]
 pub struct HeaderUsage {
     pub session: Option<f64>,
     pub weekly: Option<f64>,
-    pub credits: Option<f64>,
 }
 
 pub fn fetch_usage(
@@ -68,7 +74,7 @@ pub fn fetch_usage(
         .get(USAGE_URL)
         .header("Authorization", format!("Bearer {}", access_token))
         .header("Accept", "application/json")
-        .header("User-Agent", "OpenUsage");
+        .header("User-Agent", "ClaudeCode/2.1.69");
 
     if let Some(account) = account_id {
         req = req.header("ChatGPT-Account-Id", account);
@@ -81,35 +87,30 @@ pub fn fetch_usage(
     if status == 401 {
         return Err("Token expired. Run `codex` to log in again.".into());
     }
+
+    if status == 403 {
+        return Err("Access forbidden. Your Codex subscription may have expired.".into());
+    }
+
     if !status.is_success() {
         return Err(format!("API error: HTTP {}", status).into());
     }
 
-    let header_session = resp
-        .headers()
-        .get("x-codex-primary-used-percent")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.parse::<f64>().ok());
-
-    let header_weekly = resp
-        .headers()
-        .get("x-codex-secondary-used-percent")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.parse::<f64>().ok());
-
-    let header_credits = resp
-        .headers()
-        .get("x-codex-credits-balance")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.parse::<f64>().ok());
-
-    let header_usage = HeaderUsage {
-        session: header_session,
-        weekly: header_weekly,
-        credits: header_credits,
-    };
-
     let data: CodexUsageResponse = resp.json()?;
 
-    Ok((data, header_usage))
+    let session = data
+        .rate_limit
+        .as_ref()
+        .and_then(|rl| rl.primary_window.as_ref())
+        .and_then(|pw| pw.as_data())
+        .and_then(|d| d.used_percent);
+
+    let weekly = data
+        .rate_limit
+        .as_ref()
+        .and_then(|rl| rl.secondary_window.as_ref())
+        .and_then(|sw| sw.as_data())
+        .and_then(|d| d.used_percent);
+
+    Ok((data, HeaderUsage { session, weekly }))
 }

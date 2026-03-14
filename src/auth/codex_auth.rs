@@ -158,11 +158,9 @@ pub fn refresh_token(auth: &mut CodexAuth) -> Result<(), String> {
 
     let status = resp.status();
 
-    if status == 400 || status == 401 {
-        return Err("Session expired. Run `codex` to log in again.".to_string());
-    }
     if !status.is_success() {
-        return Err(format!("Refresh failed: HTTP {}", status));
+        let error_body = resp.text().unwrap_or_default();
+        return Err(format!("Refresh failed: HTTP {} - {}", status, error_body));
     }
 
     let data: serde_json::Value = resp

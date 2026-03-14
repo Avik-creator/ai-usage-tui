@@ -3,9 +3,7 @@ mod app;
 mod auth;
 mod ui;
 
-use crate::api::api::UsageResponse as ClaudeUsage;
-use crate::api::codex_api::CodexUsageResponse as CodexUsage;
-use app::{App, Service, UsageLine};
+use app::{App, Service};
 use ratatui::crossterm::event::{self, Event, KeyCode};
 use std::env;
 use std::time::Duration;
@@ -14,21 +12,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
 
     let headless = env::args().any(|arg| arg == "--headless" || arg == "-h");
-    let service_arg = env::args().find(|a| a.starts_with("--service="));
-    let initial_service = if let Some(s) = service_arg {
-        match s.trim_start_matches("--service=") {
-            "codex" => Service::Codex,
-            _ => Service::Claude,
-        }
-    } else {
-        Service::Claude
-    };
+    let initial_service = parse_service_arg();
 
     let mut app = App::new().with_service(initial_service);
 
     match app.active_service {
         Service::Claude => run_claude(&mut app, headless)?,
         Service::Codex => run_codex(&mut app, headless)?,
+        Service::Copilot => run_copilot(&mut app, headless)?,
+        Service::OpenCode => run_opencode(&mut app, headless)?,
     }
 
     if headless {
@@ -37,6 +29,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     run_tui(app)?;
     Ok(())
+}
+
+fn parse_service_arg() -> Service {
+    env::args()
+        .find(|a| a.starts_with("--service="))
+        .map(|s| match s.trim_start_matches("--service=") {
+            "claude" => Service::Claude,
+            "codex" => Service::Codex,
+            "copilot" => Service::Copilot,
+            "opencode" => Service::OpenCode,
+            _ => Service::Claude,
+        })
+        .unwrap_or(Service::Claude)
 }
 
 fn run_claude(app: &mut App, headless: bool) -> Result<(), Box<dyn std::error::Error>> {
@@ -93,7 +98,7 @@ fn run_claude(app: &mut App, headless: bool) -> Result<(), Box<dyn std::error::E
 }
 
 fn run_codex(app: &mut App, headless: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let mut codex_auth = match auth::load_auth() {
+    let mut codex_auth = match auth::load_codex_auth() {
         Ok(a) => a,
         Err(e) => {
             if headless {
@@ -106,17 +111,8 @@ fn run_codex(app: &mut App, headless: bool) -> Result<(), Box<dyn std::error::Er
         }
     };
 
-    if auth::needs_refresh(&codex_auth) {
-        if let Err(e) = auth::refresh_codex_token(&mut codex_auth) {
-            if headless {
-                eprintln!("Error refreshing Codex token: {}", e);
-                std::process::exit(1);
-            }
-            app.error = Some(e);
-            app.is_loading = false;
-            return Ok(());
-        }
-    }
+    // Try to refresh
+    let _ = auth::refresh_codex_token(&mut codex_auth);
 
     match api::fetch_codex_usage(&codex_auth) {
         Ok((usage, headers)) => {
@@ -124,7 +120,7 @@ fn run_codex(app: &mut App, headless: bool) -> Result<(), Box<dyn std::error::Er
                 print_codex_headless(&usage, &headers);
                 return Ok(());
             }
-            app.add_codex_usage(&usage, &headers, None);
+            app.add_codex_usage(&usage, &headers);
         }
         Err(e) => {
             if headless {
@@ -132,6 +128,63 @@ fn run_codex(app: &mut App, headless: bool) -> Result<(), Box<dyn std::error::Er
                 std::process::exit(1);
             }
             app.error = Some(e.to_string());
+            app.is_loading = false;
+        }
+    }
+
+    Ok(())
+}
+
+fn run_copilot(app: &mut App, headless: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let copilot_auth = match auth::load_copilot_auth() {
+        Ok(a) => a,
+        Err(e) => {
+            if headless {
+                eprintln!("Error loading Copilot credentials: {}", e);
+                std::process::exit(1);
+            }
+            app.error = Some(e);
+            app.is_loading = false;
+            return Ok(());
+        }
+    };
+
+    match auth::fetch_copilot_usage(&copilot_auth) {
+        Ok(usage) => {
+            if headless {
+                print_copilot_headless(&usage);
+                return Ok(());
+            }
+            app.add_copilot_usage(&usage);
+        }
+        Err(e) => {
+            if headless {
+                eprintln!("Error fetching Copilot usage: {}", e);
+                std::process::exit(1);
+            }
+            app.error = Some(e.to_string());
+            app.is_loading = false;
+        }
+    }
+
+    Ok(())
+}
+
+fn run_opencode(app: &mut App, headless: bool) -> Result<(), Box<dyn std::error::Error>> {
+    match auth::load_opencode_auth() {
+        Ok(auth) => {
+            if headless {
+                println!("OpenCode stats: run `opencode stats`");
+                return Ok(());
+            }
+            app.add_opencode_usage(&auth);
+        }
+        Err(e) => {
+            if headless {
+                eprintln!("Error loading OpenCode credentials: {}", e);
+                std::process::exit(1);
+            }
+            app.error = Some(e);
             app.is_loading = false;
         }
     }
@@ -151,15 +204,13 @@ fn run_tui(mut app: App) -> Result<(), Box<dyn std::error::Error>> {
                     KeyCode::Char('q') => {
                         app.should_quit = true;
                     }
-                    KeyCode::Tab => {
-                        app.active_service = match app.active_service {
-                            Service::Claude => Service::Codex,
-                            Service::Codex => Service::Claude,
-                        };
-                        match app.active_service {
-                            Service::Claude => run_claude(&mut app, false)?,
-                            Service::Codex => run_codex(&mut app, false)?,
-                        }
+                    KeyCode::Tab | KeyCode::Right => {
+                        app.active_service = app.active_service.next();
+                        reload_service(&mut app)?;
+                    }
+                    KeyCode::Left => {
+                        app.active_service = app.active_service.prev();
+                        reload_service(&mut app)?;
                     }
                     _ => {}
                 }
@@ -175,7 +226,23 @@ fn run_tui(mut app: App) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn print_claude_headless(usage: &ClaudeUsage, plan: Option<&str>) {
+fn reload_service(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
+    app.usage_lines.clear();
+    app.error = None;
+    app.is_loading = true;
+    app.plan = None;
+
+    match app.active_service {
+        Service::Claude => run_claude(app, false)?,
+        Service::Codex => run_codex(app, false)?,
+        Service::Copilot => run_copilot(app, false)?,
+        Service::OpenCode => run_opencode(app, false)?,
+    }
+
+    Ok(())
+}
+
+fn print_claude_headless(usage: &crate::api::api::UsageResponse, plan: Option<&str>) {
     println!("━━━ Claude AI Usage ━━━");
     if let Some(p) = plan {
         println!("Plan: {}", p);
@@ -192,34 +259,44 @@ fn print_claude_headless(usage: &ClaudeUsage, plan: Option<&str>) {
     println!("━━━━━━━━━━━━━━━━━━━━");
 }
 
-fn print_codex_headless(usage: &CodexUsage, headers: &api::codex_api::HeaderUsage) {
+fn print_codex_headless(
+    usage: &crate::api::codex_api::CodexUsageResponse,
+    headers: &crate::api::codex_api::HeaderUsage,
+) {
     println!("━━━ OpenAI Codex Usage ━━━");
     if let Some(ref plan) = usage.plan_type {
         println!("Plan: {}", plan);
     }
-    if let Some(s) = headers.session.or_else(|| {
-        usage
-            .rate_limit
-            .as_ref()
-            .and_then(|r| r.primary_window.as_ref())
-            .and_then(|w| w.used_percent)
-    }) {
+    if let Some(s) = headers.session {
         println!("Session: {:.1}%", s);
     }
-    if let Some(w) = headers.weekly.or_else(|| {
-        usage
-            .rate_limit
-            .as_ref()
-            .and_then(|r| r.secondary_window.as_ref())
-            .and_then(|w| w.used_percent)
-    }) {
+    if let Some(w) = headers.weekly {
         println!("Weekly: {:.1}%", w);
     }
-    if let Some(c) = headers
-        .credits
-        .or_else(|| usage.credits.as_ref().and_then(|c| c.balance))
-    {
-        println!("Credits: {:.0}", c);
+    println!("━━━━━━━━━━━━━━━━━━━━━━━");
+}
+
+fn print_copilot_headless(usage: &crate::auth::copilot_auth::CopilotUsageResponse) {
+    println!("━━━ GitHub Copilot Usage ━━━");
+    if let Some(ref plan) = usage.copilot_plan {
+        println!("Plan: {}", plan);
+    }
+    if let Some(quota) = &usage.quota_snapshots {
+        if let Some(chat) = &quota.chat {
+            if let Some(pct) = chat.percent_remaining {
+                println!("Chat: {:.0}% remaining", pct);
+            }
+        }
+        if let Some(premium) = &quota.premium_interactions {
+            if let Some(pct) = premium.percent_remaining {
+                println!("Premium: {:.0}% remaining", pct);
+            }
+        }
+    }
+    if let (Some(lq), Some(mq)) = (&usage.limited_user_quotas, &usage.monthly_quotas) {
+        if let (Some(remaining), Some(limit)) = (lq.chat, mq.chat) {
+            println!("Chat (Free): {} / {} left", remaining, limit);
+        }
     }
     println!("━━━━━━━━━━━━━━━━━━━━━━━");
 }
