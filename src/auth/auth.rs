@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 const REFRESH_URL: &str = "https://platform.claude.com/v1/oauth/token";
 const SCOPES: &str = "user:profile user:inference user:sessions:claude_code user:mcp_servers";
-const REFRESH_BUFFER_MS: u64 = 5 * 60 * 1000; // 5 minutes
+const REFRESH_BUFFER_MS: u64 = 5 * 60 * 1000;
 
 #[derive(Deserialize, Serialize)]
 pub struct CredentialsFile {
@@ -15,7 +15,7 @@ pub struct CredentialsFile {
     pub claude_ai_oauth: OAuthData,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Clone)]
 pub struct OAuthData {
     #[serde(rename = "accessToken")]
     pub access_token: String,
@@ -31,7 +31,6 @@ pub struct OAuthData {
 }
 
 pub fn load_credentials() -> Result<CredentialsFile, String> {
-    // Try file first
     let path = credentials_path()?;
     if let Ok(text) = fs::read_to_string(&path) {
         if let Ok(creds) = serde_json::from_str::<CredentialsFile>(&text) {
@@ -39,7 +38,6 @@ pub fn load_credentials() -> Result<CredentialsFile, String> {
         }
     }
 
-    // Fall back to keychain
     let keychain_data = read_from_keychain()?;
     let creds: CredentialsFile = serde_json::from_str(&keychain_data)
         .map_err(|e| format!("Could not parse credentials JSON: {}", e))?;
@@ -64,7 +62,6 @@ fn read_from_keychain() -> Result<String, String> {
 
     let mut text = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
-    // Check if it's hex-encoded (macOS keychain sometimes returns hex)
     if text.starts_with("7b") || text.contains("\\x") {
         text = decode_hex_string(&text)?;
     }
@@ -167,7 +164,6 @@ pub fn refresh_token(oauth: &mut OAuthData) -> Result<(), String> {
 }
 
 fn credentials_path() -> Result<PathBuf, String> {
-    // check for env override first
     if let Ok(custom) = std::env::var("CLAUDE_CREDS_PATH") {
         return Ok(PathBuf::from(custom));
     }

@@ -16,7 +16,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut app = App::new();
 
-    // step 1: load credentials
     let mut creds = match auth::load_credentials() {
         Ok(c) => c,
         Err(e) => {
@@ -30,7 +29,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    // step 2: refresh token if expired
     if auth::is_token_expired(&creds.claude_ai_oauth) {
         if let Err(e) = auth::refresh_token(&mut creds.claude_ai_oauth) {
             if headless {
@@ -43,7 +41,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // step 3: fetch usage
     match api::fetch_usage(&creds.claude_ai_oauth) {
         Ok(usage) => {
             if headless {
@@ -107,7 +104,6 @@ fn run_tui(mut app: App) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // ALWAYS restore or your terminal breaks
     ratatui::restore();
     Ok(())
 }
