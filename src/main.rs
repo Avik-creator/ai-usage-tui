@@ -1,11 +1,11 @@
-mod app;
-mod ui;
-mod auth;
 mod api;
+mod app;
+mod auth;
+mod ui;
 
-use std::time::Duration;
 use app::{App, UsageLine};
 use ratatui::crossterm::event::{self, Event, KeyCode};
+use std::time::Duration;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
@@ -63,12 +63,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Err(e) => {
-            app.error = Some(e);
+            app.error = Some(e.to_string());
             app.is_loading = false;
         }
     }
 
-    run_tui(app);
+    run_tui(app)?;
+    Ok(())
 }
 
 fn run_tui(mut app: App) -> Result<(), Box<dyn std::error::Error>> {

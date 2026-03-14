@@ -1,10 +1,10 @@
 use crate::app::{App, UsageLine};
 use ratatui::{
-    Frame,
     layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Gauge, Paragraph},
+    Frame,
 };
 
 pub fn render(frame: &mut Frame, app: &App) {
@@ -22,17 +22,14 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
 
     if let Some(ref err) = app.error {
-        let error_text = Paragraph::new(err.as_str())
-            .style(Style::default().fg(Color::Red));
+        let error_text = Paragraph::new(err.as_str()).style(Style::default().fg(Color::Red));
         frame.render_widget(error_text, inner_area);
         return;
     }
 
     // one row per usage line + 1 for the quit hint
     let row_count = (app.usage_lines.len() + 1).max(1);
-    let constraints: Vec<Constraint> = (0..row_count)
-        .map(|_| Constraint::Length(3))
-        .collect();
+    let constraints: Vec<Constraint> = (0..row_count).map(|_| Constraint::Length(3)).collect();
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -76,8 +73,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                     ),
                     Span::raw(value.as_str()),
                 ]);
-                let para = Paragraph::new(text)
-                    .block(Block::default().borders(Borders::ALL));
+                let para = Paragraph::new(text).block(Block::default().borders(Borders::ALL));
                 frame.render_widget(para, chunks[i]);
             }
 
@@ -92,8 +88,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                         Style::default().fg(Color::Black).bg(Color::Gray),
                     ),
                 ]);
-                let para = Paragraph::new(text)
-                    .block(Block::default().borders(Borders::ALL));
+                let para = Paragraph::new(text).block(Block::default().borders(Borders::ALL));
                 frame.render_widget(para, chunks[i]);
             }
         }
@@ -101,8 +96,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     // quit hint
     let last = chunks[app.usage_lines.len()];
-    let hint = Paragraph::new(" Press q to quit")
-        .style(Style::default().fg(Color::DarkGray));
+    let hint = Paragraph::new(" Press q to quit").style(Style::default().fg(Color::DarkGray));
     frame.render_widget(hint, last);
 }
 

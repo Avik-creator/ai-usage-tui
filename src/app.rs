@@ -7,9 +7,20 @@ pub struct App {
 }
 
 pub enum UsageLine {
-  Progress {label: String, used: f64, total: f64, resets_at: Option<String>},
-  Text {label: String, value: String},
-  Badge {label: String, value: String}
+    Progress {
+        label: String,
+        used: f64,
+        total: f64,
+        resets_at: Option<String>,
+    },
+    Text {
+        label: String,
+        value: String,
+    },
+    Badge {
+        label: String,
+        value: String,
+    },
 }
 
 impl App {

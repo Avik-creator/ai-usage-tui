@@ -32,8 +32,8 @@ pub struct OAuthData {
 pub fn load_credentials() -> Result<CredentialsFile, String> {
     let path = credentials_path()?;
 
-    let text = fs::read_to_string(&path)
-        .map_err(|e| format!("Could not read credentials file: {}", e))?;
+    let text =
+        fs::read_to_string(&path).map_err(|e| format!("Could not read credentials file: {}", e))?;
 
     let creds: CredentialsFile = serde_json::from_str(&text)
         .map_err(|e| format!("Could not parse credentials JSON: {}", e))?;
@@ -97,6 +97,7 @@ pub fn refresh_token(oauth: &mut OAuthData) -> Result<(), String> {
     oauth.access_token = new_token.to_string();
 
     if let Some(new_refresh) = data["refresh_token"].as_str() {
+        let new_refresh: &str = new_refresh;
         oauth.refresh_token = Some(new_refresh.to_string());
     }
     if let Some(expires_in) = data["expires_in"].as_u64() {
@@ -116,8 +117,7 @@ fn credentials_path() -> Result<PathBuf, String> {
         return Ok(PathBuf::from(custom));
     }
 
-    let home = dirs::home_dir()
-        .ok_or("Could not find home directory")?;
+    let home = dirs::home_dir().ok_or("Could not find home directory")?;
 
     Ok(home.join(".claude").join(".credentials.json"))
 }
